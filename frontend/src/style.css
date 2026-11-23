@@ -218,3 +218,9 @@ dialog .panel-head { padding: 0 0 10px; min-height: 32px; }
   .panel-body, .panel-form { padding: 12px; }
   .partition-strip div { padding: 8px; }
 }
+
+.fields.two { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.estimates th, .estimates td { font-size: 12px; white-space: nowrap; }
+.estimates td:first-child { white-space: normal; }
+.reconcile-metrics { grid-template-columns: repeat(4, minmax(0,1fr)); }
+#estimate-calibration { border-top: 1px solid var(--line); }

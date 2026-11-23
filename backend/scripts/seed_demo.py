@@ -37,9 +37,13 @@ def seed():
                    ('时长与镜头 · v2', 0.20, ARRAY['minutes','shots'], %s)
             ON CONFLICT (name) DO NOTHING''', ('analyst@bridge.test', 'analyst@bridge.test'))
         # Stable natural keys and user-editable values make repeat runs directly comparable.
+        # Order columns are listed explicitly so the new settled_at timestamp stays out of
+        # the checksum and repeated seeds stay byte-identical.
         sets = {table: db.execute(f'SELECT {columns} FROM {table} ORDER BY {order_key}').fetchall()
                 for table, columns, order_key in (
-                    ('accounts', 'email, role', 'email'), ('orders', '*', 'code'), ('crews', '*', 'code'),
+                    ('accounts', 'email, role', 'email'),
+                    ('orders', 'code, title, crew, minutes, shots, switches, hours', 'code'),
+                    ('crews', '*', 'code'),
                     ('plans', 'name, alpha, features', 'name'),
                 )}
     content = json.dumps(sets, sort_keys=True, ensure_ascii=False).encode()

@@ -33,6 +33,11 @@ class OrderInput(OrderDetails):
     code: OrderCode
 
 
+class EstimateInput(Intake):
+    order_code: OrderCode
+    crew: CrewCode
+
+
 class PlanInput(Input):
     name: str = Field(min_length=1, max_length=64)
     alpha: float = Field(ge=0.001, le=100)

@@ -30,6 +30,8 @@ export const api = {
   report: (id, signal) => request(`/reports/${id}`, {signal}),
   publish: id => request(`/reports/${id}/publish`, {method:'POST'}),
   estimate: (id, data) => request(`/reports/${id}/estimate`, {method:'POST', data}),
+  estimates: id => request(`/reports/${id}/estimates`),
+  reconcile: id => request(`/reports/${id}/estimates/reconcile`),
   export: id => request(`/reports/${id}/export`, {blob:true}),
 };
 

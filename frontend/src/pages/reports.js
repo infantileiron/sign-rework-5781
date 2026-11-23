@@ -1,5 +1,5 @@
 import {api} from '../api/studio.js';
-import {coefficients, foldDetails, maeBars, predictions} from '../components/results.js';
+import {calibrationNote, coefficients, foldDetails, issuedEstimates, maeBars, predictions, reconciliation} from '../components/results.js';
 import {empty, heading, intakeFields, intakeValues, panelTitle, status} from '../components/common/ui.js';
 import {features, models} from '../constants/domain.js';
 import {buttonAction, formSubmit} from '../hooks/interaction.js';
@@ -7,6 +7,22 @@ import {waitForReport} from '../hooks/poll.js';
 import {crewName, studio} from '../stores/studio.js';
 import {esc, fixed} from '../utils/format.js';
 import {reportList} from './runs.js';
+
+function estimateView() {
+  return `<div class="split result-split details-split">
+    <section class="panel selected">${panelTitle('接单试估与排期上限', '<span class="caps">按工单号冻结</span>')}
+      <form id="estimate-form" class="panel-form">
+        <p class="subtle">用本报告入选模型给出点估计，并按已结算误差校准 90% 单侧排期上限。同一报告内工单号只发一次，重试不会改变已发出的上限。</p>
+        <div class="fields two"><label>工单号<input name="order_code" required pattern="[A-Z][A-Z0-9\\-]{2,19}" placeholder="QY-0609"></label>
+          <label>摄制组<select name="crew" required>${studio.crews.map(crew => `<option value="${crew.code}">${esc(crew.name)}</option>`).join('')}</select></label></div>
+        <div class="fields">${intakeFields({minutes:5.5,shots:22,switches:2})}</div>
+        <div class="form-actions"><button type="submit" class="accent">发出排期上限</button><output id="estimate-value" aria-live="polite"></output></div>
+        <p class="error" role="alert"></p></form>
+      <div class="panel-body" id="estimate-calibration"></div>
+    </section>
+    <section class="panel">${panelTitle('已发出的排期上限')}<div id="issued-list"><p class="empty">正在读取…</p></div></section>
+  </div>`;
+}
 
 function resultView(report) {
   const result = report.result;
@@ -28,11 +44,9 @@ function resultView(report) {
       ${result.folds.map(foldDetails).join('')}
     </section>
   </div>
+  ${estimateView()}
   <div class="split result-split details-split">
-    <section class="panel">${panelTitle('新片工时试估')}
-      <form id="estimate-form" class="panel-form"><p class="subtle">用本报告入选模型估算。超出开发样本范围的特征会标记外推。</p><div class="fields">${intakeFields({minutes:5.5,shots:22,switches:2})}</div>
-      <div class="form-actions"><button type="submit" class="accent">估算工时</button><output id="estimate-value" aria-live="polite"></output></div><p class="error" role="alert"></p></form>
-    </section>
+    <section class="panel">${panelTitle('试估与结算对账', '<span class="caps">按工单号</span>')}<div id="reconcile-body"><p class="empty">正在对账…</p></div></section>
     <section class="panel">${panelTitle('留出组逐工单核对')}${predictions(holdout.predictions)}</section>
   </div>`;
 }
@@ -41,10 +55,11 @@ function showReport(root, report, reload) {
   const result = report.result;
   const showPublish = report.status === 'succeeded' && studio.user.role === 'owner';
   root.innerHTML = `${heading('排期解释', `比选报告 <em class="mono">#${report.id}</em>`, `${esc(report.plan.name)} · α ${report.plan.alpha} · ${report.sample_count} 条快照工单`,
-    `<div class="page-actions"><a class="button" href="#/reports">返回报告</a>${result ? '<button id="download" class="button">导出 CSV</button>' : ''}${showPublish ? '<button id="publish" class="accent">复核并发布</button>' : ''}</div>`)}
+    `<div class="page-actions"><a class="button" href="#/reports">返回报告</a>${result ? '<button id="refresh-estimates" class="button">刷新上限与对账</button><button id="download" class="button">导出 CSV</button>' : ''}${showPublish ? '<button id="publish" class="accent">复核并发布</button>' : ''}</div>`)}
     <div class="snapshot">${status(report.status)}<span title="${esc(report.fingerprint)}">快照 <code>${esc(report.fingerprint.slice(0,16))}</code></span><span>${report.plan.features.map(key => features[key]).join(' / ')}</span></div>
     <p id="report-error" role="alert" class="error">${esc(report.error)}</p>
     ${result ? resultView(report) : empty(report.status === 'queued' ? '已冻结样本，计算进程将自动处理。页面会刷新进度。' : '本次计算未产生结果。可调整 α 或特征方案后重新提交。')}`;
+  if (!result) return;
   const msg = root.querySelector('#report-error');
   const download = root.querySelector('#download');
   if (download) download.onclick = () => buttonAction(download, msg, async () => {
@@ -59,14 +74,34 @@ function showReport(root, report, reload) {
     await api.publish(report.id);
     reload();
   });
+  root.querySelector('#refresh-estimates').onclick = () => loadEstimates(root, report, msg);
   formSubmit(root.querySelector('#estimate-form'), async data => {
     const output = root.querySelector('#estimate-value');
     output.textContent = '';
-    const result = await api.estimate(report.id, intakeValues(data));
+    const row = await api.estimate(report.id, {
+      ...intakeValues(data), order_code: data.get('order_code'), crew: data.get('crew'),
+    });
     if (!output.isConnected) return;
-    const warning = result.outside_range.length ? ` · 外推：${result.outside_range.map(key => features[key]).join('、')}` : '';
-    output.textContent = `${fixed(result.hours)} h · ${models[result.model]}${warning}`;
+    const reused = row.reused ? ' · 已发出的上限照旧' : '';
+    const warning = row.point.outside_range.length ? ` · 外推：${row.point.outside_range.map(key => features[key]).join('、')}` : '';
+    output.textContent = `点 ${fixed(row.point_hours)} h · 上限 ${fixed(row.upper_hours)} h${reused}${warning}`;
+    root.querySelector('#estimate-calibration').innerHTML = calibrationNote(row.calibration);
+    await loadEstimates(root, report, msg);
   });
+  loadEstimates(root, report, msg);
+}
+
+async function loadEstimates(root, report, msg) {
+  try {
+    const [issued, reporting] = await Promise.all([api.estimates(report.id), api.reconcile(report.id)]);
+    if (!root.isConnected) return;
+    const list = root.querySelector('#issued-list');
+    const body = root.querySelector('#reconcile-body');
+    if (list) list.innerHTML = issuedEstimates(issued.estimates);
+    if (body) body.innerHTML = reconciliation(reporting);
+  } catch (error) {
+    if (msg?.isConnected) msg.textContent = error.message;
+  }
 }
 
 export function reportsPage(root, id, reload) {

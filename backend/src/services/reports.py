@@ -15,7 +15,7 @@ def digest(snapshot):
 
 
 def enqueue(db, plan_id, holdout, actor):
-    samples = orders.list_orders(db)
+    samples = orders.snapshot_orders(db)
     plan = plans.get_plan(db, plan_id)
     validate_sample(samples, holdout)
     snapshot = {'orders': samples, 'plan': {key: plan[key] for key in ('id', 'name', 'alpha', 'features')},

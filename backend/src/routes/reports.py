@@ -6,13 +6,14 @@ from src.config.database import connect
 from src.constants.domain import Role
 from src.controllers.auth import allow, current_user
 from src.models import audit, reports
-from src.schemas.inputs import Intake, RunInput
-from src.services.comparison import predict
+from src.schemas.inputs import EstimateInput, RunInput
+from src.services import estimates as forecast
 from src.services.reports import enqueue, require_result, rows_csv
 
 
 router = APIRouter(prefix='/api/reports')
 ReportID = Annotated[int, Path(gt=0, le=9223372036854775807)]
+OrderCode = Annotated[str, Path(pattern=r'^[A-Z][A-Z0-9-]{2,19}$')]
 
 
 @router.get('')
@@ -43,9 +44,37 @@ def publish(report_id: ReportID, user=Depends(allow(Role.OWNER))):
 
 
 @router.post('/{report_id}/estimate')
-def estimate(report_id: ReportID, form: Intake, user=Depends(current_user)):
+def estimate(report_id: ReportID, form: EstimateInput, user=Depends(current_user)):
+    """Issue and freeze a point estimate plus a scheduling upper limit."""
     report = detail(report_id, user)
-    return predict(require_result(report), form.model_dump())
+    require_result(report)
+    with connect() as db:
+        row = forecast.issue(db, report, form.model_dump(), user['email'])
+    return row
+
+
+@router.get('/{report_id}/estimates')
+def estimate_list(report_id: ReportID, user=Depends(current_user)):
+    report = detail(report_id, user)
+    require_result(report)
+    with connect() as db:
+        return forecast.issued(db, report)
+
+
+@router.get('/{report_id}/estimates/reconcile')
+def estimate_reconcile(report_id: ReportID, user=Depends(current_user)):
+    report = detail(report_id, user)
+    require_result(report)
+    with connect() as db:
+        return forecast.reconcile(db, report)
+
+
+@router.get('/{report_id}/estimates/{order_code}')
+def estimate_detail(report_id: ReportID, order_code: OrderCode, user=Depends(current_user)):
+    report = detail(report_id, user)
+    require_result(report)
+    with connect() as db:
+        return forecast.lookup(db, report, order_code)
 
 
 @router.get('/{report_id}/export')
